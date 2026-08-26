@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GeoData Studio</title>
+<style>/*<!--STYLES-->*/</style>
+</head>
+<body>
+
+<div class="app">
+  <header class="top">
+    <div class="logo">geodata<b>studio</b></div>
+    <nav class="tabs">
+      <button class="tab is-on" data-tab="browse">Browse &amp; Edit</button>
+      <button class="tab" data-tab="compare">Compare</button>
+    </nav>
+    <div class="grow"></div>
+    <div id="pipeline" class="pipe" hidden>
+      <span class="pipe-dot"></span>
+      <span id="pipe-label" class="pipe-label">pipeline</span>
+      <button id="pipe-load" class="btn sm">Load latest</button>
+      <button id="pipe-stage" class="btn sm">Stage edits</button>
+      <button id="pipe-publish" class="btn sm primary">Publish</button>
+    </div>
+    <button id="btn-undo" class="btn icon" title="Undo">&#8630;</button>
+    <button id="btn-redo" class="btn icon" title="Redo">&#8631;</button>
+    <button id="btn-new" class="btn">New file</button>
+    <button id="btn-import" class="btn primary">Import files</button>
+    <input type="file" id="file-input" multiple accept=".dat,.txt,.list,.csv,.conf" hidden>
+  </header>
+
+  <div class="main">
+    <aside class="side">
+      <div class="side-h">Files <span id="file-count" class="dim"></span></div>
+      <div id="files" class="files"></div>
+      <div class="side-h">Category</div>
+      <div id="info" class="info"></div>
+    </aside>
+
+    <section class="pane" id="pane-browse">
+      <div class="bar">
+        <input id="q" class="inp search" placeholder="Filter entries:  text,  /regex/,  91.108.,  1.2.3.0/24,  /24" spellcheck="false">
+        <select id="f-type" class="inp sm"></select>
+        <label class="chk-line tight" title="Hide categories with no matching entries"><input type="checkbox" id="hide-empty" checked><span>hide empty</span></label>
+        <button id="btn-expand" class="btn sm">Expand</button>
+        <button id="btn-collapse" class="btn sm">Collapse</button>
+        <div class="grow"></div>
+        <button id="btn-newcat" class="btn sm">+ Category</button>
+        <button id="btn-merge" class="btn sm">Merge</button>
+        <button id="btn-optimize" class="btn sm">Optimize</button>
+        <button id="btn-export" class="btn sm primary">Export</button>
+      </div>
+      <div class="selbar" id="selbar" hidden>
+        <span id="sel-info"></span>
+        <div class="grow"></div>
+        <button id="sel-del-e" class="btn sm danger">Delete entries</button>
+        <button id="sel-copy" class="btn sm">Copy to...</button>
+        <button id="sel-move" class="btn sm">Move to...</button>
+        <button id="sel-merge" class="btn sm">Merge categories</button>
+        <button id="sel-del-c" class="btn sm danger">Delete categories</button>
+        <button id="sel-clear" class="btn sm ghost">Clear</button>
+      </div>
+      <div id="list" class="list"></div>
+      <div class="drop-hint">Drop <b>.dat</b> or <b>.txt</b> files anywhere to import</div>
+    </section>
+
+    <section class="pane" id="pane-compare" hidden>
+      <div class="bar">
+        <span class="lbl inline">A</span>
+        <select id="cmp-a" class="inp"></select>
+        <button id="cmp-swap" class="btn icon" title="Swap A and B">&#8646;</button>
+        <span class="lbl inline">B</span>
+        <select id="cmp-b" class="inp"></select>
+        <span class="lbl inline">Mode</span>
+        <select id="cmp-mode" class="inp sm">
+          <option value="exact">Exact entries</option>
+          <option value="coverage">IP coverage (geoip)</option>
+        </select>
+        <label class="chk-line tight"><input type="checkbox" id="cmp-only-diff" checked><span>differences only</span></label>
+        <button id="cmp-run" class="btn sm primary">Compare</button>
+        <div class="grow"></div>
+        <span id="cmp-summary" class="dim"></span>
+      </div>
+      <div class="cmp-body">
+        <div id="cmp-cats" class="cmp-cats"></div>
+        <div class="cmp-detail">
+          <div id="cmp-detail-head" class="cmp-detail-head"></div>
+          <div id="cmp-list" class="list"></div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <footer class="status">
+    <span id="status-left"></span>
+    <span class="grow"></span>
+    <span id="status-right" class="dim"></span>
+  </footer>
+</div>
+
+<div id="busy" class="busy" hidden><div class="busy-box"><div class="spin"></div><span id="busy-msg"></span></div></div>
+<div id="modals"></div>
+<div id="toasts"></div>
+
+<script id="worker-src" type="text/plain">/*<!--WORKER-->*/</script>
+<script>/*<!--SCRIPTS-->*/</script>
+<script>App.init(); Pipeline.init();</script>
+</body>
+</html>

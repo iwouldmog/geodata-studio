@@ -1,0 +1,8 @@
+# build output
+dist/
+
+# geofiles
+*.dat
+
+node_modules/
+.DS_Store
