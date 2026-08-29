@@ -25,6 +25,7 @@ var Pipeline = (function () {
   function setInfo(j) {
     info = j;
     var bits = [j.branch + ' @ ' + j.head.slice(0, 7)];
+    if (j.behind) bits.push(j.behind + ' behind origin');
     if (j.pending && j.pending.length) bits.push(j.pending.length + ' file(s) staged');
     else bits.push('clean');
     if (j.builtAt) bits.push('built ' + j.builtAt.replace('T', ' ').slice(0, 16));
@@ -37,10 +38,19 @@ var Pipeline = (function () {
   function refresh() { return api('api/state').then(setInfo); }
 
 
+  /* the checkout goes stale on its own between rebuilds, so catch it up first;
+     a sync that cannot run is worth saying out loud but must not block loading */
+  function syncFirst() {
+    return api('api/sync', { method: 'POST' }).then(function (r) {
+      if (r.pulled) App.toast('Pulled ' + r.behind + ' new commit(s) — now at ' + r.head.slice(0, 7));
+      else if (!r.ok) App.toast('Loading the local copy: ' + r.reason, 'warn');
+    }).catch(function () { App.toast('Loading the local copy — the bridge could not check origin', 'warn'); });
+  }
+
   function loadLatest() {
     busy(true);
     var got = 0;
-    var chain = FILES.reduce(function (p, f) {
+    var chain = syncFirst().then(function () { return FILES.reduce(function (p, f) {
       return p.then(function () {
         return fetch('api/file/' + f.kind).then(function (r) {
           if (r.status === 404) return null;
@@ -48,7 +58,7 @@ var Pipeline = (function () {
           return r.arrayBuffer().then(function (buf) { got++; return App.loadBytes(f.name, buf); });
         });
       });
-    }, Promise.resolve());
+    }, Promise.resolve()); });
 
     return chain.then(refresh).then(function () {
       if (!got) App.toast('The pipeline has not published anything yet — run node build.mjs first', 'warn');
