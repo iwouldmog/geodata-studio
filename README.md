@@ -3,7 +3,7 @@
 A browser-based viewer, editor and differ for V2Ray/Xray **`geoip.dat`** and **`geosite.dat`**
 routing databases.
 
-### → [iwouldmog.github.io](https://iwouldmog.github.io/)
+### → [iwouldmog.github.io/geodata-studio](https://iwouldmog.github.io/geodata-studio/)
 
 Drop your `.dat` files on the page and start. **Nothing is uploaded.** There is no
 backend and no third party involved: every byte you open is parsed by JavaScript
