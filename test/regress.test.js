@@ -178,5 +178,34 @@ const before = Cidr.toRanges(...[ip(['1.0.0.0/24', '1.0.1.0/24'])].flatMap((x) =
 const after = Cidr.toRanges(agg.ips, agg.pfx, agg.fam, 1);
 ok(JSON.stringify(before.v4) === JSON.stringify(after.v4), 'covered address space is unchanged');
 
+sec('geosite include: expands the named category');
+
+const GOOGLE = Object.assign(site(['domain:google.com', 'full:ads.google.com @ads', 'domain:google.cn @cn', 'domain:g.cn @cn @ads']), { name: 'GOOGLE' });
+const byName = (name) => (name.toUpperCase() === 'GOOGLE' ? GOOGLE : null);
+let inc = TextFmt.parse('geosite', 'domain:a.com\ninclude:google\nfull:b.com', byName);
+ok(inc.errors.length === 0 && lines(inc).join() ===
+  'domain:a.com,domain:google.com,full:ads.google.com @ads,domain:google.cn @cn,domain:g.cn @cn @ads,full:b.com',
+  'include:google is replaced in place by every GOOGLE rule, attributes kept');
+ok(inc.included.length === 1 && inc.included[0].name === 'GOOGLE' && inc.included[0].n === 4 && inc.included[0].line === 2,
+  'and reports what it pulled in, from which line');
+inc = TextFmt.parse('geosite', 'include:google @cn', byName);
+ok(lines(inc).join() === 'domain:google.cn @cn,domain:g.cn @cn @ads', '@cn keeps only rules that have @cn');
+inc = TextFmt.parse('geosite', 'include:google @-ads', byName);
+ok(lines(inc).join() === 'domain:google.com,domain:google.cn @cn', '@-ads keeps only rules without @ads');
+inc = TextFmt.parse('geosite', 'include:google @cn @-ads', byName);
+ok(lines(inc).join() === 'domain:google.cn @cn', 'filters combine: with @cn AND without @ads');
+inc = TextFmt.parse('geosite', 'include:nope\nexample.com', byName);
+ok(inc.n === 1 && inc.errors.length === 1 && /no category "nope"/.test(inc.errors[0].msg), 'an unknown name is a line error, the rest still parses');
+inc = TextFmt.parse('geosite', 'include:google\nexample.com', () => 'a category cannot include itself');
+ok(inc.n === 1 && inc.errors[0].msg === 'a category cannot include itself', 'a resolver can refuse with its own reason');
+inc = TextFmt.parse('geosite', 'include:google\nexample.com');
+ok(inc.n === 1 && inc.errors.length === 1 && inc.included.length === 0, 'with no resolver include: stays an unusable line, as before');
+inc = TextFmt.parse('geosite', 'include:google', byName);
+const incBack = GeoDat.parseGeoSite(GeoDat.write('geosite', [Object.assign(inc, { name: 'X' })]))[0];
+ok(lines(incBack).join() === lines(GOOGLE).join(), 'an expanded include round-trips through .dat');
+inc = TextFmt.parse('geoip', 'include:direct\n1.0.0.0/24');
+ok(inc.n === 1 && /geosite syntax/.test(inc.errors[0].msg), 'geoip text explains that include: is geosite-only');
+
+
 console.log(fails === 0 ? '\nregress: all ' + checks + ' checks passed' : '\nregress: ' + fails + ' of ' + checks + ' FAILED');
 process.exit(fails ? 1 : 0);

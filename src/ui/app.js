@@ -1075,11 +1075,24 @@ var App = (function () {
   }
 
 
+  function catResolver(f, self) {
+    return function (name) {
+      var key = name.toUpperCase();
+      for (var i = 0; i < f.cats.length; i++) {
+        if (f.cats[i].name.toUpperCase() !== key) continue;
+        if (f.cats[i] === self) return 'a category cannot include itself';
+        return f.cats[i];
+      }
+      return null;
+    };
+  }
+
   function addEntriesModal(cat) {
     var f = activeFile();
     entryTextModal({
       title: 'Add entries to ' + cat.name,
       kind: f.kind,
+      resolve: catResolver(f, cat),
       submit: 'Add',
       onOk: function (chunk, opts) {
         var bs = busy('Adding ' + fmtN(chunk.n) + ' entries...');
@@ -1102,6 +1115,7 @@ var App = (function () {
     entryTextModal({
       title: 'New category in ' + f.name,
       kind: f.kind,
+      resolve: catResolver(f),
       submit: 'Create',
       withName: Model.uniqueName(f.cats, 'NEW'),
       onOk: function (chunk, opts, name) {
@@ -1132,12 +1146,12 @@ var App = (function () {
         }
         b.appendChild(el('label', 'lbl', o.kind === 'geoip'
           ? 'CIDRs or IPs, one per line'
-          : 'Rules, one per line (full: / domain: / keyword: / regexp:, bare value = domain:)'));
+          : 'Rules, one per line (full: / domain: / keyword: / regexp:, bare value = domain:, include:NAME copies in another category)'));
         var ta = el('textarea', 'inp mono');
         ta.rows = 12;
         ta.placeholder = o.kind === 'geoip'
           ? '1.0.0.0/24\n8.8.8.8\n2001:db8::/32'
-          : 'example.com\nfull:www.example.com @ads\nkeyword:tracker\nregexp:^ads[0-9]+\\.';
+          : 'example.com\nfull:www.example.com @ads\nkeyword:tracker\nregexp:^ads[0-9]+\\.\ninclude:google @-ads';
         b.appendChild(ta);
         var stat = el('div', 'parse-stat');
         b.appendChild(stat);
@@ -1146,9 +1160,14 @@ var App = (function () {
         ta.oninput = function () {
           clearTimeout(t);
           t = setTimeout(function () {
-            var res = TextFmt.parse(o.kind, ta.value);
+            var res = TextFmt.parse(o.kind, ta.value, o.resolve);
             stat.innerHTML = '';
             stat.appendChild(el('span', 'good', fmtN(res.n) + ' valid'));
+            if (res.included && res.included.length) {
+              stat.appendChild(el('span', null, res.included.map(function (x) {
+                return fmtN(x.n) + ' from ' + x.name;
+              }).join(', ')));
+            }
             if (res.errors.length) {
               stat.appendChild(el('span', 'bad', fmtN(res.errors.length) + ' rejected'));
               var d = el('div', 'errs');
@@ -1167,7 +1186,7 @@ var App = (function () {
         { label: 'Cancel', run: function (c) { c(); } },
         {
           label: o.submit, primary: true, run: function (close, body) {
-            var res = TextFmt.parse(o.kind, body._ta.value);
+            var res = TextFmt.parse(o.kind, body._ta.value, o.resolve);
             if (!res.n) { toast('Nothing valid to add', 'err'); return; }
             var opts = { optimize: $('#ae-opt', body).checked, fold: false };
             close();
@@ -1207,13 +1226,12 @@ var App = (function () {
     var files = Array.prototype.slice.call(fileList);
     if (!files.length) return;
     var bs = busy('Reading ' + files.length + ' file(s)...');
-    var chain = Promise.resolve();
+    var chain = Promise.resolve(), texts = [];
     files.forEach(function (file) {
       chain = chain.then(function () {
         return file.arrayBuffer().then(function (buf) {
           bs.set('Parsing ' + file.name + '...');
-          var isText = /\.(txt|list|csv|conf)$/i.test(file.name);
-          if (isText) return importText(file, buf);
+          if (isTextFile(file.name, buf)) { texts.push({ file: file, buf: buf }); return; }
           return runJob('parse', { buf: buf, name: file.name }, {
             transfer: [buf],
             onProgress: function (p) { bs.set('Parsing ' + file.name + ' ' + Math.round(p * 100) + '%'); }
@@ -1228,21 +1246,58 @@ var App = (function () {
         });
       });
     });
-    return chain.then(function () { bs.end(); renderCmpPickers(); });
+    return chain.then(function () {
+      if (texts.length) importTexts(texts);
+      bs.end(); renderCmpPickers();
+    });
   }
 
-  function importText(file, buf) {
-    var text = new TextDecoder().decode(new Uint8Array(buf));
-    var kind = TextFmt.sniffText(text) || 'geosite';
-    var res = TextFmt.parse(kind, text);
-    var base = file.name.replace(/\.[^.]+$/, '').toUpperCase();
+  function isTextFile(name, buf) {
+    if (/\.(txt|list|csv|conf)$/i.test(name)) return true;
+    if (/\.[^.]+$/.test(name)) return false;
+    var b = new Uint8Array(buf, 0, Math.min(buf.byteLength, 4096));
+    for (var i = 0; i < b.length; i++) if (b[i] < 9) return false;
+    return !GeoDat.sniff(new Uint8Array(buf));
+  }
+
+  function importTexts(texts) {
+    var items = texts.map(function (t) {
+      var text = new TextDecoder().decode(new Uint8Array(t.buf));
+      return {
+        file: t.file, text: text, kind: TextFmt.sniffText(text) || 'geosite',
+        name: t.file.name.replace(/\.[^.]+$/, '').toUpperCase(), res: null, busy: false
+      };
+    });
+    function parsed(it) {
+      if (it.res) return it.res;
+      it.busy = true;
+      it.res = TextFmt.parse(it.kind, it.text, function (name) {
+        var key = name.toUpperCase();
+        for (var i = 0; i < items.length; i++) {
+          if (items[i].kind !== it.kind || items[i].name !== key) continue;
+          return items[i].busy ? 'include:' + name + ' loops back to a file that includes it' : parsed(items[i]);
+        }
+        var f = activeFile();
+        return f && f.kind === it.kind ? catResolver(f)(name) : null;
+      });
+      it.res.name = it.name;
+      it.busy = false;
+      return it.res;
+    }
+    items.forEach(function (it) { importText(it.file, it.kind, it.name, parsed(it)); });
+  }
+
+  function importText(file, kind, base, res) {
     var f = activeFile();
+    var via = res.included && res.included.length
+      ? ', ' + fmtN(res.included.reduce(function (a, x) { return a + x.n; }, 0)) + ' via include'
+      : '';
     if (f && f.kind === kind) {
       pushUndo(f, 'import ' + file.name);
       var cat = Model.withName(res, Model.uniqueName(f.cats, base));
       cat.uid = ++uidSeq;
       f.cats.push(cat);
-      afterChange('Imported ' + file.name + ' as category ' + cat.name + ' (' + fmtN(res.n) + ' entries)');
+      afterChange('Imported ' + file.name + ' as category ' + cat.name + ' (' + fmtN(res.n) + ' entries' + via + ')');
     } else {
       var cat2 = Model.withName(res, base);
       addFile(file.name, kind, [cat2], file.size);
@@ -1252,7 +1307,6 @@ var App = (function () {
       toast(fmtN(res.errors.length) + ' line' + (res.errors.length === 1 ? '' : 's') + ' in ' + file.name +
         ' rejected — first: ' + res.errors[0].msg, 'warn');
     }
-    return Promise.resolve();
   }
 
   function download(name, blob) {
