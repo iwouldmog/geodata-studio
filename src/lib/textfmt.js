@@ -22,6 +22,7 @@ var TextFmt = (function () {
     var cat = resolve(name);
     if (typeof cat === 'string') return cat;
     if (!cat) return 'no category "' + name + '" to include';
+    if (cat.reverse) return cat.name + ' is reverse-match: its entries are the addresses it does not match, so including them would invert it';
     var want = [], not = [], i, k;
     if (at) for (k = 0; k < at.length; k++) {
       if (at[k].k.charAt(0) === '-') { if (at[k].k.length > 1) not.push(at[k].k.slice(1)); }
@@ -40,6 +41,26 @@ var TextFmt = (function () {
   function hasKey(at, key) {
     if (at) for (var i = 0; i < at.length; i++) if (at[i].k === key) return true;
     return false;
+  }
+
+  function weave(n, incs, own, inc) {
+    var o = 0, src = 0;
+    for (var q = 0; q <= incs.length; q++) {
+      var stop = q < incs.length ? incs[q].at : n;
+      for (; src < stop; src++) own(src, o++);
+      if (q === incs.length) break;
+      for (var r = 0; r < incs[q].idx.length; r++) inc(incs[q].cat, incs[q].idx[r], o++);
+    }
+    return o;
+  }
+
+  function woven(n, incs) {
+    for (var q = 0; q < incs.length; q++) n += incs[q].idx.length;
+    return n;
+  }
+
+  function summary(incs) {
+    return incs ? incs.map(function (x) { return { line: x.line, name: x.cat.name, n: x.idx.length }; }) : [];
   }
 
   function parseSite(text, resolve) {
@@ -91,30 +112,21 @@ var TextFmt = (function () {
       if (at) hasAttr = true;
       n++;
     }
-    var included = [];
     if (incs) {
-      var total = n, q, o = 0, src = 0;
-      for (q = 0; q < incs.length; q++) total += incs[q].idx.length;
+      var total = woven(n, incs);
       var t2 = new Uint8Array(total), v2 = new Array(total), a2 = new Array(total);
-      for (q = 0; q <= incs.length; q++) {
-        var stop = q < incs.length ? incs[q].at : n;
-        for (; src < stop; src++, o++) { t2[o] = type[src]; v2[o] = val[src]; a2[o] = attrs[src]; }
-        if (q === incs.length) break;
-        var ic = incs[q].cat, ix = incs[q].idx;
-        for (var r = 0; r < ix.length; r++, o++) {
-          t2[o] = ic.type[ix[r]]; v2[o] = ic.val[ix[r]];
-          a2[o] = ic.attrs ? ic.attrs[ix[r]] : null;
-          if (a2[o]) hasAttr = true;
-        }
-        included.push({ line: incs[q].line, name: ic.name, n: ix.length });
-      }
+      weave(n, incs, function (s, o) { t2[o] = type[s]; v2[o] = val[s]; a2[o] = attrs[s]; }, function (c, s, o) {
+        t2[o] = c.type[s]; v2[o] = c.val[s];
+        a2[o] = c.attrs ? c.attrs[s] : null;
+        if (a2[o]) hasAttr = true;
+      });
       type = t2; val = v2; attrs = a2; n = cap = total;
     }
     return {
       kind: 'geosite', n: n,
       type: n * 2 < cap ? type.slice(0, n) : type.subarray(0, n), val: val.slice(0, n),
       attrs: hasAttr ? attrs.slice(0, n) : null,
-      errors: errors, included: included
+      errors: errors, included: summary(incs)
     };
   }
 
@@ -127,26 +139,46 @@ var TextFmt = (function () {
   }
 
 
-  function parseIp(text) {
+  function parseIp(text, resolve) {
     var lines = splitLines(text);
     var cap = lines.length;
     var ips = new Uint8Array(cap * 16), pfx = new Uint8Array(cap), fam = new Uint8Array(cap);
-    var errors = [], n = 0;
+    var errors = [], n = 0, incs = null;
     for (var i = 0; i < lines.length; i++) {
       var raw = stripComment(lines[i]);
       if (!raw) continue;
+      if (/^include:/i.test(raw)) {
+        var parts = raw.split(/\s+/);
+        var inc = parts.length === 1 ? includeOf(parts[0].slice(8), null, resolve)
+          : parts[1].charAt(0) === '@' ? 'geoip entries carry no @attributes to filter on'
+            : 'unexpected token "' + parts[1] + '"';
+        if (typeof inc === 'string') pushErr(errors, { line: i + 1, text: lines[i], msg: inc });
+        else (incs || (incs = [])).push({ at: n, line: i + 1, cat: inc.cat, idx: inc.idx });
+        continue;
+      }
       raw = raw.split(/[\s,;]+/)[0];
       if (!raw) continue;
       var r = Cidr.parse(raw, ips, n * 16);
       if (!r) {
-        pushErr(errors, { line: i + 1, text: lines[i], msg: /^include:/i.test(raw)
-          ? 'include: is geosite syntax; combine geoip categories with Merge instead'
-          : 'not an IP or CIDR' });
+        pushErr(errors, { line: i + 1, text: lines[i], msg: 'not an IP or CIDR' });
         continue;
       }
       pfx[n] = r.prefix;
       fam[n] = r.fam;
       n++;
+    }
+    var keep = null, bad = 0;
+    if (incs) {
+      var total = woven(n, incs);
+      var ips2 = new Uint8Array(total * 16), pfx2 = new Uint8Array(total), fam2 = new Uint8Array(total);
+      weave(n, incs, function (s, o) {
+        ips2.set(ips.subarray(s * 16, s * 16 + 16), o * 16); pfx2[o] = pfx[s]; fam2[o] = fam[s];
+      }, function (c, s, o) {
+        ips2.set(c.ips.subarray(s * 16, s * 16 + 16), o * 16); pfx2[o] = c.pfx[s]; fam2[o] = c.fam[s];
+        if (c.raw && c.raw.has(s)) (keep || (keep = new Map())).set(o, c.raw.get(s));
+        if (!Cidr.validAt(pfx2, fam2, o)) bad++;
+      });
+      ips = ips2; pfx = pfx2; fam = fam2; n = cap = total;
     }
     var tight = n * 2 < cap;
     return {
@@ -154,7 +186,8 @@ var TextFmt = (function () {
       ips: tight ? ips.slice(0, n * 16) : ips.subarray(0, n * 16),
       pfx: tight ? pfx.slice(0, n) : pfx.subarray(0, n),
       fam: tight ? fam.slice(0, n) : fam.subarray(0, n),
-      errors: errors
+      raw: keep, bad: bad,
+      errors: errors, included: summary(incs)
     };
   }
 
@@ -163,7 +196,7 @@ var TextFmt = (function () {
 
   function line(cat, i) { return cat.kind === 'geoip' ? ipLine(cat, i) : siteLine(cat, i); }
 
-  function parse(kind, text, resolve) { return kind === 'geoip' ? parseIp(text) : parseSite(text, resolve); }
+  function parse(kind, text, resolve) { return kind === 'geoip' ? parseIp(text, resolve) : parseSite(text, resolve); }
 
   function toText(cat, idx) {
     var out = [], n = idx ? idx.length : cat.n;
@@ -175,7 +208,7 @@ var TextFmt = (function () {
     var lines = splitLines(text), ip = 0, site = 0, tmp = new Uint8Array(16), checked = 0;
     for (var i = 0; i < lines.length && checked < 40; i++) {
       var raw = stripComment(lines[i]);
-      if (!raw) continue;
+      if (!raw || /^include:/i.test(raw)) continue;
       checked++;
       var first = raw.split(/\s+/)[0];
       if (Cidr.parse(first, tmp, 0)) ip++; else site++;

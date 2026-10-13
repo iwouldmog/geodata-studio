@@ -1145,12 +1145,12 @@ var App = (function () {
           b.appendChild(nm);
         }
         b.appendChild(el('label', 'lbl', o.kind === 'geoip'
-          ? 'CIDRs or IPs, one per line'
+          ? 'CIDRs or IPs, one per line (include:NAME copies in another category)'
           : 'Rules, one per line (full: / domain: / keyword: / regexp:, bare value = domain:, include:NAME copies in another category)'));
         var ta = el('textarea', 'inp mono');
         ta.rows = 12;
         ta.placeholder = o.kind === 'geoip'
-          ? '1.0.0.0/24\n8.8.8.8\n2001:db8::/32'
+          ? '1.0.0.0/24\n8.8.8.8\n2001:db8::/32\ninclude:whitelist'
           : 'example.com\nfull:www.example.com @ads\nkeyword:tracker\nregexp:^ads[0-9]+\\.\ninclude:google @-ads';
         b.appendChild(ta);
         var stat = el('div', 'parse-stat');
@@ -1264,10 +1264,13 @@ var App = (function () {
     var items = texts.map(function (t) {
       var text = new TextDecoder().decode(new Uint8Array(t.buf));
       return {
-        file: t.file, text: text, kind: TextFmt.sniffText(text) || 'geosite',
+        file: t.file, text: text, kind: TextFmt.sniffText(text),
         name: t.file.name.replace(/\.[^.]+$/, '').toUpperCase(), res: null, busy: false
       };
     });
+    var known = items.filter(function (it) { return it.kind; })[0], af = activeFile();
+    var guess = known ? known.kind : af ? af.kind : 'geosite';
+    items.forEach(function (it) { if (!it.kind) it.kind = guess; });
     function parsed(it) {
       if (it.res) return it.res;
       it.busy = true;

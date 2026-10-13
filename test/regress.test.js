@@ -203,8 +203,34 @@ ok(inc.n === 1 && inc.errors.length === 1 && inc.included.length === 0, 'with no
 inc = TextFmt.parse('geosite', 'include:google', byName);
 const incBack = GeoDat.parseGeoSite(GeoDat.write('geosite', [Object.assign(inc, { name: 'X' })]))[0];
 ok(lines(incBack).join() === lines(GOOGLE).join(), 'an expanded include round-trips through .dat');
+ok(TextFmt.sniffText('include:a\ninclude:b') === null && TextFmt.sniffText('include:a\ninclude:b\n1.0.0.0/24') === 'geoip',
+  'include: lines say nothing about the kind of a text file');
+
+
+sec('geoip include: expands the named category');
+
+const DIRECT = Object.assign(ip(['10.0.0.0/8', '2001:db8::/32']), { name: 'DIRECT' });
+const ipByName = (name) => ({ DIRECT, BAD: withRaw([[[1, 2, 3], 24, 0], [[1, 1, 1, 0], 24, 4]]),
+  REV: Object.assign(ip(['1.0.0.0/8']), { name: 'REV', reverse: true }) })[name.toUpperCase()] || null;
+inc = TextFmt.parse('geoip', '1.0.0.0/24\ninclude:direct\n2.0.0.0/8', ipByName);
+ok(inc.errors.length === 0 && cidrs(inc).join() === '1.0.0.0/24,10.0.0.0/8,2001:db8::/32,2.0.0.0/8',
+  'include:direct is replaced in place by every DIRECT block');
+ok(inc.included.length === 1 && inc.included[0].name === 'DIRECT' && inc.included[0].n === 2, 'and reports what it pulled in');
+inc = TextFmt.parse('geoip', '10.0.0.0/9\ninclude:direct', ipByName);
+ok(cidrs(Model.optimize(Object.assign(inc, { name: 'X', reverse: false })).cat).join() === '10.0.0.0/8,2001:db8::/32',
+  'included blocks merge with pasted ones on optimize');
+inc = TextFmt.parse('geoip', 'include:direct @cn\n1.0.0.0/24', ipByName);
+ok(inc.n === 1 && /no @attributes/.test(inc.errors[0].msg), 'an @attribute filter on a geoip include is a line error');
+inc = TextFmt.parse('geoip', 'include:rev\n1.0.0.0/24', ipByName);
+ok(inc.n === 1 && /reverse-match/.test(inc.errors[0].msg), 'a reverse_match category is refused: its entries are exclusions');
+inc = TextFmt.parse('geoip', 'include:nope\n1.0.0.0/24', ipByName);
+ok(inc.n === 1 && /no category "nope"/.test(inc.errors[0].msg), 'an unknown name is a line error, the rest still parses');
 inc = TextFmt.parse('geoip', 'include:direct\n1.0.0.0/24');
-ok(inc.n === 1 && /geosite syntax/.test(inc.errors[0].msg), 'geoip text explains that include: is geosite-only');
+ok(inc.n === 1 && inc.errors.length === 1 && inc.included.length === 0, 'with no resolver include: stays an unusable line');
+inc = TextFmt.parse('geoip', '9.9.9.0/24\ninclude:bad', ipByName);
+ok(inc.n === 3 && inc.bad === 1 && inc.raw && inc.raw.get(1).length === 3, 'a non-routable entry is carried across with its original bytes');
+const ipBack = GeoDat.parseGeoIP(GeoDat.write('geoip', [Object.assign(inc, { name: 'X', reverse: false })]))[0];
+ok(cidrs(ipBack).join() === cidrs(inc).join() && ipBack.bad === 1, 'and an expanded geoip include round-trips through .dat');
 
 
 console.log(fails === 0 ? '\nregress: all ' + checks + ' checks passed' : '\nregress: ' + fails + ' of ' + checks + ' FAILED');

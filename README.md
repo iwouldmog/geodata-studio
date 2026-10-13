@@ -102,9 +102,10 @@ create categories, rename, duplicate, clear, delete, sort, copy a category to an
 file, and move/copy selected entries into another category. Every mutation is one labeled
 undo step (⌘Z / ⌘⇧Z), scoped per file.
 
-**Include.** In geosite text — the *Add entries* and *+ Category* boxes, and imported text
-files — `include:NAME` pulls in every rule of category `NAME` (matched case-insensitively,
-first copy wins, like xray), with the same selective syntax as domain-list-community:
+**Include.** In text — the *Add entries* and *+ Category* boxes, and imported text files —
+`include:NAME` pulls in every entry of category `NAME` in the same file (matched
+case-insensitively, first copy wins, like xray). Geosite takes the same selective syntax as
+domain-list-community:
 
 ```
 include:google            every rule of GOOGLE
@@ -113,11 +114,17 @@ include:google @-ads      only rules that do not carry @ads
 include:google @cn @-ads  both conditions
 ```
 
-A `.dat` has no include, so the rules are copied in at the moment you add them: the new
+Geoip entries have no attributes, so there it is just `include:whitelist`. With *Optimize*
+on, included blocks merge with the rest like any pasted CIDR. A `reverse_match` category
+cannot be included: its entries are the addresses it does *not* match. Entries xray cannot
+route on come across byte-for-byte, as everywhere else.
+
+A `.dat` has no include, so the entries are copied in at the moment you add them: the new
 category does not follow later edits to `GOOGLE`. In pipeline mode the copy is staged as an
 ordinary `-add.txt` overlay; for an include that keeps tracking upstream, use a `union:`
 step in the build recipe. A missing name, a category including itself, and a cycle between
-imported files are reported per line and skipped. Geoip text has no `include:`; use *Merge*.
+imported files are reported per line and skipped. A text file made only of `include:` lines
+takes its kind from the other files dropped with it, or else from the open file.
 
 **Merge.** Select two or more categories, hit *Merge*: they are concatenated, deduplicated
 and optimized in one step — for geoip that means tangential CIDRs across the sources collapse
@@ -220,7 +227,7 @@ just the previous array of category references.
 for t in test/*.test.js; do node "$t" || break; done   # the suite CI runs
 
 node test/cidr-deep.test.js                # 113 checks: CIDR layer vs an independent BigInt model
-node test/regress.test.js                  # 51 checks: fold/dedupe/diff/codec/include regressions
+node test/regress.test.js                  # 60 checks: fold/dedupe/diff/codec/include regressions
 node test/cidr.test.js                     # aggregation/subtract/intersect vs brute-force bitmaps
 node test/ops.test.js                      # optimize, diff, merge, text round trips
 node test/roundtrip.test.js [file.dat...]  # parse -> write byte-identity; defaults to test/fixtures/
