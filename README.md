@@ -51,7 +51,10 @@ publish anything that breaks the build's guarantees.
 **Import.** Drop or pick any number of `.dat` files; each becomes its own tab-less "file" in
 the sidebar. Kind (geoip vs geosite) is detected from the protobuf wire shape, not the
 filename. `.txt` / `.list` files import as a single category, into the active file if the
-kinds match, otherwise as a new file.
+kinds match, otherwise as a new file. So do extensionless files that are not `.dat`, which is
+how `domain-list-community/data/` names them. Text files dropped together are imported after
+any `.dat` files in the same drop, and their `include:` lines resolve against each other first,
+then against the active file.
 
 **Browse.** Categories collapse and expand; the entry list is virtualized, so a category with
 400 000+ CIDRs opens instantly and scrolls at frame rate (only ~30 rows exist in the DOM at
@@ -98,6 +101,23 @@ delete single entries or a multi-select (click, ⌘/ctrl-click, shift-click for 
 create categories, rename, duplicate, clear, delete, sort, copy a category to another loaded
 file, and move/copy selected entries into another category. Every mutation is one labeled
 undo step (⌘Z / ⌘⇧Z), scoped per file.
+
+**Include.** In geosite text — the *Add entries* and *+ Category* boxes, and imported text
+files — `include:NAME` pulls in every rule of category `NAME` (matched case-insensitively,
+first copy wins, like xray), with the same selective syntax as domain-list-community:
+
+```
+include:google            every rule of GOOGLE
+include:google @cn        only rules that carry @cn
+include:google @-ads      only rules that do not carry @ads
+include:google @cn @-ads  both conditions
+```
+
+A `.dat` has no include, so the rules are copied in at the moment you add them: the new
+category does not follow later edits to `GOOGLE`. In pipeline mode the copy is staged as an
+ordinary `-add.txt` overlay; for an include that keeps tracking upstream, use a `union:`
+step in the build recipe. A missing name, a category including itself, and a cycle between
+imported files are reported per line and skipped. Geoip text has no `include:`; use *Merge*.
 
 **Merge.** Select two or more categories, hit *Merge*: they are concatenated, deduplicated
 and optimized in one step — for geoip that means tangential CIDRs across the sources collapse
@@ -200,7 +220,7 @@ just the previous array of category references.
 for t in test/*.test.js; do node "$t" || break; done   # the suite CI runs
 
 node test/cidr-deep.test.js                # 113 checks: CIDR layer vs an independent BigInt model
-node test/regress.test.js                  # 41 checks: fold/dedupe/diff/codec regressions
+node test/regress.test.js                  # 51 checks: fold/dedupe/diff/codec/include regressions
 node test/cidr.test.js                     # aggregation/subtract/intersect vs brute-force bitmaps
 node test/ops.test.js                      # optimize, diff, merge, text round trips
 node test/roundtrip.test.js [file.dat...]  # parse -> write byte-identity; defaults to test/fixtures/

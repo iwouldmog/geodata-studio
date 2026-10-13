@@ -16,11 +16,37 @@ var TextFmt = (function () {
   }
 
 
-  function parseSite(text) {
+  function includeOf(name, at, resolve) {
+    if (!name) return 'include: names no category';
+    if (!resolve) return 'include: needs the category it names, and there is none to resolve it against here';
+    var cat = resolve(name);
+    if (typeof cat === 'string') return cat;
+    if (!cat) return 'no category "' + name + '" to include';
+    var want = [], not = [], i, k;
+    if (at) for (k = 0; k < at.length; k++) {
+      if (at[k].k.charAt(0) === '-') { if (at[k].k.length > 1) not.push(at[k].k.slice(1)); }
+      else want.push(at[k].k);
+    }
+    var idx = [];
+    for (i = 0; i < cat.n; i++) {
+      var a = cat.attrs ? cat.attrs[i] : null, keep = true;
+      for (k = 0; k < want.length && keep; k++) keep = hasKey(a, want[k]);
+      for (k = 0; k < not.length && keep; k++) keep = !hasKey(a, not[k]);
+      if (keep) idx.push(i);
+    }
+    return { cat: cat, idx: idx };
+  }
+
+  function hasKey(at, key) {
+    if (at) for (var i = 0; i < at.length; i++) if (at[i].k === key) return true;
+    return false;
+  }
+
+  function parseSite(text, resolve) {
     var lines = splitLines(text);
     var cap = lines.length;
     var type = new Uint8Array(cap), val = new Array(cap), attrs = new Array(cap);
-    var errors = [], hasAttr = false, n = 0;
+    var errors = [], hasAttr = false, n = 0, incs = null;
     for (var i = 0; i < lines.length; i++) {
       var raw = stripComment(lines[i]);
       if (!raw) continue;
@@ -48,7 +74,9 @@ var TextFmt = (function () {
           t = +numType[1];
           v = head.slice(colon + 1);
         } else if (pre === 'include') {
-          pushErr(errors, { line: i + 1, text: lines[i], msg: 'include: is a source-tree directive and has no .dat representation' });
+          var inc = includeOf(head.slice(colon + 1), at, resolve);
+          if (typeof inc === 'string') pushErr(errors, { line: i + 1, text: lines[i], msg: inc });
+          else (incs || (incs = [])).push({ at: n, line: i + 1, cat: inc.cat, idx: inc.idx });
           continue;
         } else if (pre === 'geosite' || pre === 'ext') {
           pushErr(errors, { line: i + 1, text: lines[i], msg: 'reference directives cannot be stored in a .dat category' });
@@ -63,11 +91,30 @@ var TextFmt = (function () {
       if (at) hasAttr = true;
       n++;
     }
+    var included = [];
+    if (incs) {
+      var total = n, q, o = 0, src = 0;
+      for (q = 0; q < incs.length; q++) total += incs[q].idx.length;
+      var t2 = new Uint8Array(total), v2 = new Array(total), a2 = new Array(total);
+      for (q = 0; q <= incs.length; q++) {
+        var stop = q < incs.length ? incs[q].at : n;
+        for (; src < stop; src++, o++) { t2[o] = type[src]; v2[o] = val[src]; a2[o] = attrs[src]; }
+        if (q === incs.length) break;
+        var ic = incs[q].cat, ix = incs[q].idx;
+        for (var r = 0; r < ix.length; r++, o++) {
+          t2[o] = ic.type[ix[r]]; v2[o] = ic.val[ix[r]];
+          a2[o] = ic.attrs ? ic.attrs[ix[r]] : null;
+          if (a2[o]) hasAttr = true;
+        }
+        included.push({ line: incs[q].line, name: ic.name, n: ix.length });
+      }
+      type = t2; val = v2; attrs = a2; n = cap = total;
+    }
     return {
       kind: 'geosite', n: n,
       type: n * 2 < cap ? type.slice(0, n) : type.subarray(0, n), val: val.slice(0, n),
       attrs: hasAttr ? attrs.slice(0, n) : null,
-      errors: errors
+      errors: errors, included: included
     };
   }
 
@@ -92,7 +139,9 @@ var TextFmt = (function () {
       if (!raw) continue;
       var r = Cidr.parse(raw, ips, n * 16);
       if (!r) {
-        if (errors.length < 5000) pushErr(errors, { line: i + 1, text: lines[i], msg: 'not an IP or CIDR' });
+        pushErr(errors, { line: i + 1, text: lines[i], msg: /^include:/i.test(raw)
+          ? 'include: is geosite syntax; combine geoip categories with Merge instead'
+          : 'not an IP or CIDR' });
         continue;
       }
       pfx[n] = r.prefix;
@@ -114,7 +163,7 @@ var TextFmt = (function () {
 
   function line(cat, i) { return cat.kind === 'geoip' ? ipLine(cat, i) : siteLine(cat, i); }
 
-  function parse(kind, text) { return kind === 'geoip' ? parseIp(text) : parseSite(text); }
+  function parse(kind, text, resolve) { return kind === 'geoip' ? parseIp(text) : parseSite(text, resolve); }
 
   function toText(cat, idx) {
     var out = [], n = idx ? idx.length : cat.n;
